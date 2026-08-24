@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AIVA Call Transcript Viewer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e6e8eb;
+    --muted: #9aa1ac;
+    --user: #2b3a55;
+    --assistant: #2b4a3a;
+    --tool: #4a3a2b;
+    --accent: #5b8def;
+    --error: #d95c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 {
+    margin: 0 0 4px;
+    font-size: 18px;
+  }
+  header p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .controls {
+    display: flex;
+    gap: 8px;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  input[type="text"] {
+    flex: 1;
+    max-width: 420px;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 14px;
+  }
+  button {
+    padding: 10px 18px;
+    background: var(--accent);
+    border: none;
+    border-radius: 6px;
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  main {
+    padding: 24px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .status {
+    color: var(--muted);
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+  .status.error {
+    color: var(--error);
+  }
+  .item {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
+  }
+  .item .meta {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .item.message.user { background: var(--user); }
+  .item.message.assistant { background: var(--assistant); }
+  .item.tool { background: var(--tool); }
+  .item pre {
+    margin: 6px 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12.5px;
+    background: rgba(0,0,0,0.25);
+    padding: 8px;
+    border-radius: 6px;
+  }
+  .item .content {
+    font-size: 14px;
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>AIVA Call Transcript Viewer</h1>
+  <p>Testing tool &mdash; shows the transcript interleaved with tool-call logs for a conversation.</p>
+</header>
+<div class="controls">
+  <input type="password" id="accessCode" placeholder="Access code" style="max-width:160px" />
+  <input type="text" id="conversationId" placeholder="Conversation ID or Call ID" />
+  <button id="fetchBtn">Fetch</button>
+</div>
+<main>
+  <div id="status" class="status"></div>
+  <div id="timeline"></div>
+</main>
+
+<script>
+  // Fill this in after deploying the Cloudflare Worker (wrangler deploy prints the URL).
+  const WORKER_URL = "REPLACE_WITH_YOUR_WORKER_URL";
+
+  const conversationIdInput = document.getElementById("conversationId");
+  const accessCodeInput = document.getElementById("accessCode");
+  const fetchBtn = document.getElementById("fetchBtn");
+  const statusEl = document.getElementById("status");
+  const timelineEl = document.getElementById("timeline");
+
+  fetchBtn.addEventListener("click", loadTranscript);
+  conversationIdInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") loadTranscript();
+  });
+
+  async function loadTranscript() {
+    const conversationId = conversationIdInput.value.trim();
+    if (!conversationId) return;
+
+    timelineEl.innerHTML = "";
+    setStatus("Loading...", false);
+    fetchBtn.disabled = true;
+
+    try {
+      const resp = await fetch(`${WORKER_URL}?conversationId=${encodeURIComponent(conversationId)}`, {
+        headers: { "X-Access-Code": accessCodeInput.value.trim() },
+      });
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        setStatus(data.error || `Request failed (${resp.status})`, true);
+        return;
+      }
+
+      renderTimeline(data.conversation, data.toolCalls);
+      setStatus(`Loaded ${data.conversation.messages.length} messages and ${data.toolCalls.length} tool calls.`, false);
+    } catch (err) {
+      setStatus(`Network error: ${err.message}`, true);
+    } finally {
+      fetchBtn.disabled = false;
+    }
+  }
+
+  function setStatus(text, isError) {
+    statusEl.textContent = text;
+    statusEl.className = "status" + (isError ? " error" : "");
+  }
+
+  function renderTimeline(conversation, toolCalls) {
+    const items = [];
+
+    for (const m of conversation.messages) {
+      items.push({ type: "message", role: m.role, createdAt: m.createdAt, content: m.content });
+    }
+    for (const t of toolCalls) {
+      items.push({ type: "tool", createdAt: t.requestedAt || t.respondedAt, call: t });
+    }
+
+    items.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+    timelineEl.innerHTML = items.map(renderItem).join("");
+  }
+
+  function renderItem(item) {
+    const time = new Date(item.createdAt).toLocaleString();
+
+    if (item.type === "message") {
+      return `
+        <div class="item message ${escapeHtml(item.role)}">
+          <div class="meta">${escapeHtml(item.role)} &middot; ${time}</div>
+          <div class="content">${escapeHtml(item.content)}</div>
+        </div>
+      `;
+    }
+
+    const call = item.call;
+    return `
+      <div class="item tool">
+        <div class="meta">tool call: ${escapeHtml(call.name)} ${call.outcome ? `(${escapeHtml(call.outcome)})` : ""} &middot; ${time}</div>
+        <div class="content">Arguments:</div>
+        <pre>${escapeHtml(prettyPrint(call.arguments))}</pre>
+        <div class="content">Result:</div>
+        <pre>${escapeHtml(prettyPrint(call.result))}</pre>
+      </div>
+    `;
+  }
+
+  function prettyPrint(value) {
+    if (value === undefined) return "(none)";
+    return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  }
+
+  function escapeHtml(str) {
+    return String(str ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+</script>
+</body>
+</html>
