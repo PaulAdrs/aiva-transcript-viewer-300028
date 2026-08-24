@@ -4,4 +4,4 @@ compatibility_date = "2024-01-01"
 
 [[kv_namespaces]]
 binding = "TOKENS"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "a23f283110d449eeaaea9e79bbd2e1b0"
